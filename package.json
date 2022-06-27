@@ -1,0 +1,22 @@
+{
+  "name": "45rpm-covers",
+  "version": "1.0.0",
+  "description": "Covers for 45 rpm",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://revdancatt@github.com/revdancatt/45rpm-covers.git"
+  },
+  "author": "revdancatt",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/revdancatt/45rpm-covers/issues"
+  },
+  "homepage": "https://github.com/revdancatt/45rpm-covers#readme",
+  "devDependencies": {
+    "standard": "^17.0.0"
+  }
+}
