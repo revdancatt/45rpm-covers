@@ -1,7 +1,7 @@
-/* global preloadImagesTmr fxhash fxrand paper1Loaded */
+/* global preloadImagesTmr $fx fxpreview fxhash fxrand paper1Loaded */
 
 //
-//  fxhash - 33⅓rpm - LP Cover
+//  fxhash - 45rpm - LP Cover
 //
 //
 //  HELLO!! Code is copyright revdancatt (that's me), so no sneaky using it for your
@@ -17,18 +17,29 @@
 //  https://youtube.com/revdancatt
 //
 
-const ratio = 1
-// const startTime = new Date().getTime() // so we can figure out how long since the scene started
-let drawn = false
+// Global values, because today I'm being an artist not an engineer!
+const ratio = 1 // canvas ratio
+const features = {} //  so we can keep track of what we're doing
+const nextFrame = null // requestAnimationFrame, and the ability to clear it
+let resizeTmr = null // a timer to make sure we don't resize too often
 let highRes = false // display high or low res
-let full = true
-const features = {}
-const nextFrame = null
+let drawStarted = false // Flag if we have kicked off the draw loop
+let thumbnailTaken = false
+let forceDownloaded = false
+const urlSearchParams = new URLSearchParams(window.location.search)
+const urlParams = Object.fromEntries(urlSearchParams.entries())
+const prefix = '45rpm-single-cover'
+// dumpOutputs will be set to false unless we have ?dumpOutputs=true in the URL
+const dumpOutputs = urlParams.dumpOutputs === 'true'
+// const startTime = new Date().getTime()
+
+// Custom features go here
+let full = false
 
 window.$fxhashFeatures = {
   Release: 'mnml Ser I XTRA',
   rpm: '45',
-  size: '12"'
+  size: '7"'
 }
 
 const colours = [
@@ -42,8 +53,10 @@ const colours = [
   ['#fa0000', '#f94000', '#f77f00', '#f9b308', '#fae60f'] // Red/Yellow
 ]
 const black = ['#000', '#000', '#000', '#000', '#000']
+const paletteNames = ['Green/Blue', 'Pink/Yellow', 'Dusk', 'Purple/Black', 'Blue/Yellow', 'Deep red/Purple/Orange', 'Green/Yellow/Orange', 'Red/Yellow']
 
-//  Work out what all our features are
+//  Call the above make features, so we'll have the window.$fxhashFeatures available
+//  for fxhash
 const makeFeatures = () => {
   // features.background = 1
   features.paperOffset = {
@@ -60,7 +73,8 @@ const makeFeatures = () => {
   features.fullWidthBlackStrip = fxrand() < 0.25
   features.blackStripTextured = fxrand() < 0.75
 
-  features.sideStripPalette = colours[Math.floor(fxrand() * colours.length)]
+  const sideStripPaletteNumber = Math.floor(fxrand() * colours.length)
+  features.sideStripPalette = colours[sideStripPaletteNumber]
   if (fxrand() < 0.5) features.sideStripPalette.reverse()
   features.sideStripTextured = fxrand() < 0.75
   features.sideStripColourCount = Math.floor(fxrand() * 4) + 2
@@ -73,7 +87,9 @@ const makeFeatures = () => {
   if (fxrand() < 0.5) features.topRightSecondaryPalette.reverse()
   features.topRightColourCount = Math.floor(fxrand() * 4) + 2
   features.topRightTextured = fxrand() < 0.75
+  window.$fxhashFeatures['Primary stripes'] = false
   if (fxrand() < 0.66) {
+    window.$fxhashFeatures['Primary stripes'] = true
     features.topRight = 'stripes'
     //  Work out if we are going to be black or not
     if (fxrand() < 0.5) features.topRightPrimaryPalette = black
@@ -81,7 +97,11 @@ const makeFeatures = () => {
 
   //  The bottom left palette can either match the strip or the top right
   features.bottomLeftPalette = features.topRightPrimaryPalette
-  if (fxrand() < 0.5) features.bottomLeftPalette = features.sideStripPalette
+  window.$fxhashFeatures['Complimentary style'] = 'Primary blend'
+  if (fxrand() < 0.5) {
+    features.bottomLeftPalette = features.sideStripPalette
+    window.$fxhashFeatures['Complimentary style'] = 'Stripe matching'
+  }
   features.bottomLeftColourCount = Math.floor(fxrand() * 5) + 1
   features.bottomLeftTextured = fxrand() < 0.75
 
@@ -166,6 +186,7 @@ const makeFeatures = () => {
     features.rotate = Math.floor(fxrand() * 3) * 90 + 90
     features.mirrored = false
   }
+
   if (features.mirrored) {
     features.mirrorMode = 'normal'
     if (fxrand() < 0.5) features.mirrorMode = 'inside'
@@ -174,90 +195,26 @@ const makeFeatures = () => {
   if (features.rightFormat === 'Isometric' || features.rightFormat === null) {
     features.mirrored = false
   }
+
+  window.$fxhashFeatures['Primary palette'] = paletteNames[col2]
+  window.$fxhashFeatures['Side palette'] = paletteNames[sideStripPaletteNumber]
+  window.$fxhashFeatures.Feature = features.rightFormat
+  if (!window.$fxhashFeatures.Feature) window.$fxhashFeatures.Feature = 'None'
+  window.$fxhashFeatures['Mirror mode'] = 'None'
+  if (features.mirrored) {
+    if (features.mirrorMode === 'normal') window.$fxhashFeatures['Mirror mode'] = 'Normal'
+    if (features.mirrorMode === 'inside') window.$fxhashFeatures['Mirror mode'] = 'Inside'
+    if (features.mirrorMode === 'outside') window.$fxhashFeatures['Mirror mode'] = 'Outside'
+  }
 }
 
 //  Call the above make features, so we'll have the window.$fxhashFeatures available
 //  for fxhash
 makeFeatures()
-console.table(window.$fxhashFeatures)
-
-const init = async () => {
-  //  I should add a timer to this, but really how often to people who aren't
-  //  the developer resize stuff all the time. Stick it in a digital frame and
-  //  have done with it!
-  window.addEventListener('resize', async () => {
-    //  If we do resize though, work out the new size...
-    await layoutCanvas()
-    //  And redraw it
-    drawCanvas()
-  })
-
-  //  Now layout the canvas
-  await layoutCanvas()
-}
-
-const layoutCanvas = async () => {
-  //  Kill the next animation frame
-  window.cancelAnimationFrame(nextFrame)
-
-  const wWidth = window.innerWidth
-  const wHeight = window.innerHeight
-  let cWidth = wWidth
-  let cHeight = cWidth * ratio
-  if (cHeight > wHeight) {
-    cHeight = wHeight
-    cWidth = wHeight / ratio
-  }
-  const canvas = document.getElementById('target')
-  if (highRes) {
-    canvas.height = 8192
-    canvas.width = 8192 / ratio
-  } else {
-    canvas.width = Math.min((8192 / 2), cWidth * 2)
-    canvas.height = Math.min((8192 / ratio / 2), cHeight * 2)
-    //  Minimum size to be half of the high rez cersion
-    if (Math.min(canvas.width, canvas.height) < 8192 / 2) {
-      if (canvas.width < canvas.height) {
-        canvas.height = 8192 / 2
-        canvas.width = 8192 / 2 / ratio
-      } else {
-        canvas.width = 8192 / 2
-        canvas.height = 8192 / 2 / ratio
-      }
-    }
-  }
-
-  canvas.style.position = 'absolute'
-  canvas.style.width = `${cWidth}px`
-  canvas.style.height = `${cHeight}px`
-  canvas.style.left = `${(wWidth - cWidth) / 2}px`
-  canvas.style.top = `${(wHeight - cHeight) / 2}px`
-
-  //  Re-Create the paper pattern
-  const paper1 = document.createElement('canvas')
-  paper1.width = canvas.width / 2
-  paper1.height = canvas.height / 2
-  const paper1Ctx = paper1.getContext('2d')
-  await paper1Ctx.drawImage(paper1Loaded, 0, 0, 1920, 1920, 0, 0, paper1.width, paper1.height)
-  features.paper1Pattern = paper1Ctx.createPattern(paper1, 'repeat')
-
-  const paper2 = document.createElement('canvas')
-  paper2.width = canvas.width / (22 / 7)
-  paper2.height = canvas.height / (22 / 7)
-  const paper2Ctx = paper2.getContext('2d')
-  await paper2Ctx.drawImage(paper1Loaded, 0, 0, 1920, 1920, 0, 0, paper2.width, paper2.height)
-  features.paper2Pattern = paper2Ctx.createPattern(paper2, 'repeat')
-
-  //  And draw it!!
-  drawCanvas()
-}
 
 const drawCanvas = async () => {
   //  Let the preloader know that we've hit this function at least once
-  drawn = true
-  //  Make sure there's only one nextFrame to be called
-  window.cancelAnimationFrame(nextFrame)
-
+  drawStarted = true
   // Grab all the canvas stuff
   const canvas = document.getElementById('target')
   const ctx = canvas.getContext('2d')
@@ -687,49 +644,206 @@ const drawCanvas = async () => {
   //  Restore it all
   ctx.restore()
 
-  //  Now do it all over again
-  // nextFrame = window.requestAnimationFrame(drawCanvas)
-  // await autoDownloadCanvas()
-  // location.reload()
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  //
+  // Below is code that is common to all the projects, there may be some
+  // customisation for animated work or special cases
+
+  // Try various methods to tell the parent window that we've drawn something
+  if (!thumbnailTaken) {
+    try {
+      $fx.preview()
+    } catch (e) {
+      try {
+        fxpreview()
+      } catch (e) {
+      }
+    }
+    thumbnailTaken = true
+  }
+
+  // If we are forcing download, then do that now
+  if (dumpOutputs || ('forceDownload' in urlParams && forceDownloaded === false)) {
+    forceDownloaded = 'forceDownload' in urlParams
+    await autoDownloadCanvas()
+    // Tell the parent window that we have downloaded
+    window.parent.postMessage('forceDownloaded', '*')
+  } else {
+    //  We should wait for the next animation frame here
+    // nextFrame = window.requestAnimationFrame(drawCanvas)
+  }
+  //
+  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 }
 
-const autoDownloadCanvas = async (showHash = false) => {
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//
+// These are the common functions that are used by the canvas that we use
+// across all the projects, init sets up the resize event and kicks off the
+// layoutCanvas function.
+//
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+//  Call this to start everything off
+const init = async () => {
+  // Resize the canvas when the window resizes, but only after 100ms of no resizing
+  window.addEventListener('resize', async () => {
+    //  If we do resize though, work out the new size...
+    clearTimeout(resizeTmr)
+    resizeTmr = setTimeout(async () => {
+      await layoutCanvas()
+    }, 100)
+  })
+
+  //  Now layout the canvas
+  await layoutCanvas()
+}
+
+//  This is where we layout the canvas, and redraw the textures
+const layoutCanvas = async (windowObj = window, urlParamsObj = urlParams) => {
+  //  Kill the next animation frame (note, this isn't always used, only if we're animating)
+  windowObj.cancelAnimationFrame(nextFrame)
+
+  //  Get the window size, and devicePixelRatio
+  const { innerWidth: wWidth, innerHeight: wHeight, devicePixelRatio = 1 } = windowObj
+  let dpr = devicePixelRatio
+  let cWidth = wWidth
+  let cHeight = cWidth * ratio
+
+  if (cHeight > wHeight) {
+    cHeight = wHeight
+    cWidth = wHeight / ratio
+  }
+
+  // Grab any canvas elements so we can delete them
+  const canvases = document.getElementsByTagName('canvas')
+  Array.from(canvases).forEach(canvas => canvas.remove())
+
+  // Now set the target width and height
+  let targetHeight = highRes ? 4096 : cHeight
+  let targetWidth = targetHeight / ratio
+
+  //  If the alba params are forcing the width, then use that (only relevant for Alba)
+  if (windowObj.alba?.params?.width) {
+    targetWidth = window.alba.params.width
+    targetHeight = Math.floor(targetWidth * ratio)
+  }
+
+  // If *I* am forcing the width, then use that, and set the dpr to 1
+  // (as we want to render at the exact size)
+  if ('forceWidth' in urlParams) {
+    targetWidth = parseInt(urlParams.forceWidth)
+    targetHeight = Math.floor(targetWidth * ratio)
+    dpr = 1
+  }
+
+  // Update based on the dpr
+  targetWidth *= dpr
+  targetHeight *= dpr
+
+  //  Set the canvas width and height
+  const canvas = document.createElement('canvas')
+  canvas.id = 'target'
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+  document.body.appendChild(canvas)
+
+  canvas.style.position = 'absolute'
+  canvas.style.width = `${cWidth}px`
+  canvas.style.height = `${cHeight}px`
+  canvas.style.left = `${(wWidth - cWidth) / 2}px`
+  canvas.style.top = `${(wHeight - cHeight) / 2}px`
+
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  //
+  // Custom code (for defining textures and buffer canvas goes here) if needed
+  //
+
+  //  Re-Create the paper pattern
+  const paper1 = document.createElement('canvas')
+  paper1.width = canvas.width / 2
+  paper1.height = canvas.height / 2
+  const paper1Ctx = paper1.getContext('2d')
+  await paper1Ctx.drawImage(paper1Loaded, 0, 0, 1920, 1920, 0, 0, paper1.width, paper1.height)
+  features.paper1Pattern = paper1Ctx.createPattern(paper1, 'repeat')
+
+  const paper2 = document.createElement('canvas')
+  paper2.width = canvas.width / (22 / 7)
+  paper2.height = canvas.height / (22 / 7)
+  const paper2Ctx = paper2.getContext('2d')
+  await paper2Ctx.drawImage(paper1Loaded, 0, 0, 1920, 1920, 0, 0, paper2.width, paper2.height)
+  features.paper2Pattern = paper2Ctx.createPattern(paper2, 'repeat')
+
+  drawCanvas()
+}
+
+//  This allows us to download the canvas as a PNG
+// If we are forcing the id then we add that to the filename
+const autoDownloadCanvas = async () => {
+  const canvas = document.getElementById('target')
+
+  // Create a download link
   const element = document.createElement('a')
-  element.setAttribute('download', `45rpm-lp-cover_${fxhash}`)
+  const filename = 'forceId' in urlParams
+    ? `${prefix}_${urlParams.forceId.toString().padStart(4, '0')}_${fxhash}`
+    : `${prefix}_${fxhash}`
+  element.setAttribute('download', filename)
+
+  // Hide the link element
   element.style.display = 'none'
   document.body.appendChild(element)
-  let imageBlob = null
-  imageBlob = await new Promise(resolve => document.getElementById('target').toBlob(resolve, 'image/png'))
-  element.setAttribute('href', window.URL.createObjectURL(imageBlob, {
-    type: 'image/png'
-  }))
+
+  // Convert canvas to Blob and set it as the link's href
+  const imageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
+  element.setAttribute('href', window.URL.createObjectURL(imageBlob))
+
+  // Trigger the download
   element.click()
+
+  // Clean up by removing the link element
   document.body.removeChild(element)
+
+  // Reload the page if dumpOutputs is true
+  if (dumpOutputs) {
+    window.location.reload()
+  }
 }
 
 //  KEY PRESSED OF DOOM
 document.addEventListener('keypress', async (e) => {
   e = e || window.event
+  // == Common controls ==
   // Save
   if (e.key === 's') autoDownloadCanvas()
 
   //   Toggle highres mode
   if (e.key === 'h') {
     highRes = !highRes
+    console.log('Highres mode is now', highRes)
     await layoutCanvas()
   }
 
+  // Custom controls
   if (e.key === 'f') {
     full = !full
+    console.log('Highres mode is now', highRes)
     await layoutCanvas()
   }
 })
+
 //  This preloads the images so we can get access to them
 // eslint-disable-next-line no-unused-vars
 const preloadImages = () => {
-  //  If paper1 has loaded and we haven't draw anything yet, then kick it all off
-  if (paper1Loaded !== null && !drawn) {
+  //  Normally we would have a test
+  // if (true === true) {
+  if (paper1Loaded && !drawStarted) {
     clearInterval(preloadImagesTmr)
     init()
   }
 }
+
+console.table(window.$fxhashFeatures)
